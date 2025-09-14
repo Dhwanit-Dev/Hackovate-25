@@ -327,3 +327,184 @@ try:
         
 except Exception as e:
     print(f"Error: {e}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# %% [code] {"execution":{"iopub.status.busy":"2025-09-14T02:47:32.270529Z","iopub.execute_input":"2025-09-14T02:47:32.270931Z","iopub.status.idle":"2025-09-14T02:47:34.210149Z","shell.execute_reply.started":"2025-09-14T02:47:32.270896Z","shell.execute_reply":"2025-09-14T02:47:34.209171Z"}}
+import pandas as pd
+import numpy as np
+import xgboost as xgb
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_absolute_error, r2_score
+import joblib
+import os
+
+
+# %% [code] {"execution":{"iopub.status.busy":"2025-09-14T02:47:34.211978Z","iopub.execute_input":"2025-09-14T02:47:34.212452Z","iopub.status.idle":"2025-09-14T02:47:34.312739Z","shell.execute_reply.started":"2025-09-14T02:47:34.212425Z","shell.execute_reply":"2025-09-14T02:47:34.311746Z"}}
+data=pd.read_csv('/kaggle/input/solar-power/solar_power_dataset.csv')
+data.head()
+data=data.drop(columns=['air_mass','weather_condition','is_raining'])
+
+# %% [code] {"execution":{"iopub.status.busy":"2025-09-14T02:47:34.313891Z","iopub.execute_input":"2025-09-14T02:47:34.314193Z","iopub.status.idle":"2025-09-14T02:47:34.327556Z","shell.execute_reply.started":"2025-09-14T02:47:34.314169Z","shell.execute_reply":"2025-09-14T02:47:34.326497Z"}}
+data.isnull().sum()
+
+# %% [code] {"execution":{"iopub.status.busy":"2025-09-14T03:00:56.534704Z","iopub.execute_input":"2025-09-14T03:00:56.535086Z","iopub.status.idle":"2025-09-14T03:00:56.921411Z","shell.execute_reply.started":"2025-09-14T03:00:56.535062Z","shell.execute_reply":"2025-09-14T03:00:56.920145Z"}}
+import numpy as np
+
+def calculate_power_output(row):
+    # Step 1: Effective irradiance after cloud cover
+    Ieff = row['solar_irradiance_w_m2'] * (1 - row['cloud_cover_percent'] / 100)
+    
+    # Step 2: Irradiance adjusted for panel tilt & solar elevation
+    theta = abs(row['solar_elevation_degrees'] - row['panel_tilt_degrees'])
+    Itilt = Ieff * np.cos(np.radians(theta))
+    Itilt = max(Itilt, 0)  # irradiance can't be negative
+    
+    # Step 3: Seasonal factor adjustment
+    Iseason = Itilt * row['seasonal_factor']
+    
+    # Step 4: Raw power from panel area
+    Praw = Iseason * row['panel_surface_area_m2']
+    
+    # Step 5: Efficiency adjustment
+    Pout = Praw * row['panel_efficiency']
+    
+    # Step 6: Temperature derating
+    if row['temperature_celsius'] > 25:
+        temp_factor = 1 - ((row['temperature_celsius'] - 25) * 0.005)
+        temp_factor = max(temp_factor, 0)  # derating shouldn't be negative
+    else:
+        temp_factor = 1
+    
+    # Step 7: Humidity derating
+    humidity_factor = 1 - max(0, (row['humidity_percent'] - 30) * 0.001)
+    
+    # Step 8: Wind-speed effect
+    wind_factor = 1 + max(0, (row['wind_speed_ms'] - 1) * 0.002)
+    
+    # Step 9: Final environmental factor
+    env_factor = temp_factor * humidity_factor * wind_factor
+    
+    # Step 10: Final solar power output in watts
+    Pfinal_watts = Pout * env_factor
+    
+    # Convert to kilowatts
+    Pfinal_kw = Pfinal_watts / 1000
+    
+    # Ensure power output is not negative
+    return max(Pfinal_kw, 0)
+
+# Apply to entire dataframe
+data['power_output_kw'] = data.apply(calculate_power_output, axis=1)
+
+# Check updated values
+print(data[['solar_irradiance_w_m2', 'cloud_cover_percent', 'solar_elevation_degrees', 'panel_tilt_degrees',
+            'seasonal_factor', 'panel_surface_area_m2', 'panel_efficiency', 'temperature_celsius', 'humidity_percent',
+            'wind_speed_ms', 'power_output_kw']].head())
+
+# %% [code] {"execution":{"iopub.status.busy":"2025-09-14T02:47:34.647771Z","iopub.execute_input":"2025-09-14T02:47:34.648023Z","iopub.status.idle":"2025-09-14T02:47:34.655164Z","shell.execute_reply.started":"2025-09-14T02:47:34.648003Z","shell.execute_reply":"2025-09-14T02:47:34.654118Z"}}
+X=data[[	'hour','day_of_year',	'month', 'latitude',	'longitude',	'panel_surface_area_m2',	'panel_tilt_degrees',	'panel_azimuth_degrees',	'panel_efficiency', 'solar_irradiance_w_m2',	'solar_elevation_degrees',	'temperature_celsius',	'humidity_percent',	'wind_speed_ms',	'cloud_cover_percent',	'seasonal_factor']]
+y=data['power_output_kw']
+
+# %% [code] {"execution":{"iopub.status.busy":"2025-09-14T02:47:34.656068Z","iopub.execute_input":"2025-09-14T02:47:34.656359Z","iopub.status.idle":"2025-09-14T02:47:34.684804Z","shell.execute_reply.started":"2025-09-14T02:47:34.656335Z","shell.execute_reply":"2025-09-14T02:47:34.683643Z"}}
+# Split data
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# %% [code] {"execution":{"iopub.status.busy":"2025-09-14T02:47:34.686089Z","iopub.execute_input":"2025-09-14T02:47:34.686440Z","iopub.status.idle":"2025-09-14T02:47:41.688479Z","shell.execute_reply.started":"2025-09-14T02:47:34.686405Z","shell.execute_reply":"2025-09-14T02:47:41.687384Z"}}
+rf = RandomForestRegressor(n_estimators=100, random_state=42)
+rf.fit(X_train, y_train)
+y_pred_rf = rf.predict(X_test)
+
+# %% [code] {"execution":{"iopub.status.busy":"2025-09-14T02:47:41.689477Z","iopub.execute_input":"2025-09-14T02:47:41.689721Z","iopub.status.idle":"2025-09-14T02:47:41.735401Z","shell.execute_reply.started":"2025-09-14T02:47:41.689702Z","shell.execute_reply":"2025-09-14T02:47:41.733345Z"}}
+y_pred = rf.predict(X_test)
+print("MAE:", mean_absolute_error(y_test, y_pred))
+print("R²:", r2_score(y_test, y_pred))
+
+# %% [code] {"execution":{"iopub.status.busy":"2025-09-14T02:47:41.736474Z","iopub.execute_input":"2025-09-14T02:47:41.736947Z","iopub.status.idle":"2025-09-14T02:47:42.115996Z","shell.execute_reply.started":"2025-09-14T02:47:41.736920Z","shell.execute_reply":"2025-09-14T02:47:42.115355Z"}}
+xgbb = xgb.XGBRegressor(
+    n_estimators=100,       # number of boosting rounds (trees)
+    learning_rate=0.1,      # step size shrinkage
+    max_depth=5,            # maximum depth of a tree
+    subsample=0.8,          # fraction of samples per tree
+    colsample_bytree=0.8,   # fraction of features per tree
+    random_state=42
+)
+
+# Train the model
+xgbb.fit(X_train, y_train)
+
+# Predict
+xgb_pred = xgbb.predict(X_test)
+
+# %% [code] {"execution":{"iopub.status.busy":"2025-09-14T02:47:42.117988Z","iopub.execute_input":"2025-09-14T02:47:42.118660Z","iopub.status.idle":"2025-09-14T02:47:42.123952Z","shell.execute_reply.started":"2025-09-14T02:47:42.118634Z","shell.execute_reply":"2025-09-14T02:47:42.123255Z"}}
+def predict_power(hour, day_of_year, month, latitude, longitude,
+                  panel_surface_area_m2, panel_tilt_degrees, panel_azimuth_degrees,
+                  panel_efficiency, solar_irradiance_w_m2, solar_elevation_degrees,
+                  temperature_celsius, humidity_percent, wind_speed_ms,
+                  cloud_cover_percent, seasonal_factor):
+    
+    features = [[hour, day_of_year, month, latitude, longitude,
+                 panel_surface_area_m2, panel_tilt_degrees, panel_azimuth_degrees,
+                 panel_efficiency, solar_irradiance_w_m2, solar_elevation_degrees,
+                 temperature_celsius, humidity_percent, wind_speed_ms,
+                 cloud_cover_percent, seasonal_factor]]
+    
+    return rf.predict(features)[0]
+
+
+# %% [code] {"execution":{"iopub.status.busy":"2025-09-14T02:47:42.126503Z","iopub.execute_input":"2025-09-14T02:47:42.126788Z","iopub.status.idle":"2025-09-14T02:47:42.150190Z","shell.execute_reply.started":"2025-09-14T02:47:42.126767Z","shell.execute_reply":"2025-09-14T02:47:42.149239Z"}}
+predicted = predict_power(
+    hour= 10,
+    day_of_year=200,
+    month=7,
+    latitude=35.0,
+    longitude =-120.0,
+    panel_surface_area_m2= 1.5,
+    panel_tilt_degrees =25,
+    panel_azimuth_degrees= 170,
+    panel_efficiency =0.20,
+    solar_irradiance_w_m2= 950,
+    solar_elevation_degrees= 55,
+    temperature_celsius =28,
+    humidity_percent =40,
+    wind_speed_ms =3,
+    cloud_cover_percent= 10,
+    seasonal_factor =0.95
+)
+
+print("Predicted Power Output:", predicted, "kW")
+
+
+# %% [code] {"execution":{"iopub.status.busy":"2025-09-14T02:47:42.151148Z","iopub.execute_input":"2025-09-14T02:47:42.151886Z","iopub.status.idle":"2025-09-14T02:47:42.239780Z","shell.execute_reply.started":"2025-09-14T02:47:42.151859Z","shell.execute_reply":"2025-09-14T02:47:42.238805Z"}}
+import joblib
+# Save the model to a file
+joblib.dump(rf, 'solar_model.pkl')
